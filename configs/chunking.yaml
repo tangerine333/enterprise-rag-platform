@@ -1,0 +1,23 @@
+# ============================================================
+# 分块策略配置 — Small-to-Big 父子分块
+# ============================================================
+
+# Small-to-Big: 子块用于精确检索, 父块用于生成阶段回溯完整上下文
+chunk_sizes:
+  child: 256       # tokens — 子块，保证检索精准度
+  parent: 1024     # tokens — 父块，生成时回溯完整上下文
+  overlap: 64      # tokens — 重叠，避免边界信息丢失
+
+# 内容类型感知的分隔符
+separators:
+  text: ["\n\n", "\n", "。", "；", " ", ""]
+  code: ["\n\n", "\n", "    ", "  ", " ", ""]
+  markdown: ["\n## ", "\n### ", "\n#### ", "\n\n", "\n", " ", ""]
+
+# 表格语义增强
+table_enhancement:
+  enabled: true
+  summary_max_chars: 50        # LLM生成的表格摘要最大长度
+  row_level_index: true        # 行级索引 ("某区域Q3数据")
+  table_level_index: true      # 表级索引 ("季度销售趋势")
+  index_format: "表头:值"      # 结构化描述格式

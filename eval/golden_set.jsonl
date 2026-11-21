@@ -1,0 +1,38 @@
+# ============================================================
+# 黄金测试集 (Golden Set) — Q-A-E 三元组
+# ============================================================
+# 格式：每行一个 JSON 对象（JSONL）
+# 字段说明：
+#   id              唯一标识，前两位表示难度
+#   difficulty      easy | medium | hard
+#   intent          factual | conceptual | comparative | procedural
+#   question        用户问题
+#   ground_truth    人工核对的黄金答案（可含多文档冲突说明）
+#   evidence_doc_ids 答案所在的文档 ID 列表（检索评估的关键依据）
+#   note            可选：备注（冲突/跨文档/边界 case）
+#
+# 分层比例参考：easy 40% / medium 40% / hard 20%
+# 覆盖四类意图：factual / conceptual / comparative / procedural
+# ============================================================
+
+{"id": "easy-001", "difficulty": "easy", "intent": "factual", "question": "产品X的最大QPS是多少？", "ground_truth": "产品X的最大QPS为10000，峰值可达12000。", "evidence_doc_ids": [1], "note": "单文档直接写明"}
+
+{"id": "easy-002", "difficulty": "easy", "intent": "conceptual", "question": "什么是HNSW索引？", "ground_truth": "HNSW是一种分层可导航小世界图算法，用于近似最近邻搜索，时间复杂度O(log N)。", "evidence_doc_ids": [2], "note": "概念型，测语义召回"}
+
+{"id": "easy-003", "difficulty": "easy", "intent": "procedural", "question": "合同审批流程有几个步骤？", "ground_truth": "共5步：发起申请→部门负责人审批→法务审核→财务审核→归档。", "evidence_doc_ids": [6], "note": "操作型，测标题/步骤匹配"}
+
+{"id": "easy-004", "difficulty": "easy", "intent": "factual", "question": "新员工入职需要准备哪些材料？", "ground_truth": "身份证复印件、学历证明、离职证明、体检报告、银行卡信息。", "evidence_doc_ids": [8], "note": ""}
+
+{"id": "med-001", "difficulty": "medium", "intent": "procedural", "question": "产品X要支持20000 QPS，怎么扩展？", "ground_truth": "通过水平扩展部署至少2个实例（单实例上限10000），配合负载均衡，可用K8s HPA自动扩缩容。", "evidence_doc_ids": [1, 2], "note": "跨文档整合（QPS上限+扩展架构）"}
+
+{"id": "med-002", "difficulty": "medium", "intent": "comparative", "question": "产品X和产品Y在QPS上有什么区别？", "ground_truth": "产品X最大QPS为10000，产品Y最大QPS为5000，X的吞吐是Y的2倍。", "evidence_doc_ids": [1, 4], "note": "对比型，测多查询并行"}
+
+{"id": "med-003", "difficulty": "medium", "intent": "factual", "question": "公司数据安全制度对合同文档有什么存储要求？", "ground_truth": "合同文档需加密存储，访问需审批留痕，保存期限10年。", "evidence_doc_ids": [5, 6], "note": "跨文档整合"}
+
+{"id": "med-004", "difficulty": "medium", "intent": "procedural", "question": "客户投诉的完整处理流程是什么？", "ground_truth": "受理登记→分级（普通/重大）→指派负责人→处理并回访→关闭归档，重大投诉24小时内上报。", "evidence_doc_ids": [7], "note": "单文档多步骤，跨多个chunk"}
+
+{"id": "hard-001", "difficulty": "hard", "intent": "factual", "question": "退款时效是多少天？", "ground_truth": "存在冲突：旧版政策写7天，新版政策写15天（现行），应以最新版本15天为准。", "evidence_doc_ids": [10, 11], "note": "多文档冲突，测冲突检测+权威加权"}
+
+{"id": "hard-002", "difficulty": "hard", "intent": "factual", "question": "项目延期申请由谁审批？", "ground_truth": "延期<7天由项目经理审批，7-30天由部门总监审批，>30天需提交项目管理委员会。", "evidence_doc_ids": [9], "note": "跨章节推理，测权限/条件型答案"}
+
+{"id": "hard-003", "difficulty": "hard", "intent": "procedural", "question": "如果要部署一个高可用且支持2万QPS的X服务，需要同时满足哪些条件？", "ground_truth": "至少2个实例水平扩展+负载均衡+K8s HPA自动扩缩容，且需按数据安全制度加密存储相关数据。", "evidence_doc_ids": [1, 2, 5], "note": "跨3文档综合推理"}

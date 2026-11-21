@@ -1,0 +1,67 @@
+# ============================================================
+# 基于Agentic RAG的企业多源异构文档智能问答平台
+# Python 3.11+ / LangChain + LangGraph + FastAPI
+# ============================================================
+
+# --- Web Framework ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.19
+
+# --- LangChain 生态 ---
+langchain==0.3.14
+langchain-openai==0.3.0
+langchain-community==0.3.14
+langgraph==0.2.61
+
+# --- 向量库 (Qdrant — 轻量高性能) ---
+qdrant-client==1.13.0
+
+# --- 关键词检索 (Elasticsearch) ---
+elasticsearch==8.17.0
+
+# --- 缓存 ---
+redis==5.2.1
+
+# --- Embedding & Reranker ---
+sentence-transformers==3.3.1
+torch==2.5.1
+transformers==4.47.1
+
+# --- 文档解析 ---
+PyMuPDF==1.25.1
+pdfplumber==0.11.4
+python-docx==1.1.2
+python-pptx==1.0.2
+openpyxl==3.1.5
+Pillow==11.1.0
+markdown-it-py==3.0.0
+# MinerU (PDF/文档智能解析) — 可选重型依赖
+# magic-pdf==0.3.x
+# PaddleOCR (中文OCR) — 可选
+# paddleocr==2.9.x
+# paddlepaddle==3.0.x
+
+# --- 评估 ---
+ragas==0.2.13
+datasets==3.2.0
+
+# --- 可观测性 ---
+prometheus-client==0.21.1
+opentelemetry-api==1.29.0
+opentelemetry-sdk==1.29.0
+opentelemetry-instrumentation-fastapi==0.50b0
+
+# --- 工具库 ---
+pydantic==2.10.4
+pydantic-settings==2.7.0
+pyyaml==6.0.2
+httpx==0.28.1
+jinja2==3.1.5
+numpy==2.2.1
+tenacity==9.0.0
+
+# --- Streamlit 管理控制台 ---
+streamlit==1.41.1
+plotly==5.24.1
+pandas>=2.0.0

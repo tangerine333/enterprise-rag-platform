@@ -1,0 +1,58 @@
+# ============================================================
+# 检索策略配置 — Agentic RAG 自适应检索
+# ============================================================
+
+# --- 意图 → 检索策略路由 (LLM驱动) ---
+intent_routing:
+  factual:         # 事实型: "合同金额多少" → 关键词优先
+    primary: keyword
+    secondary: [semantic]
+    weight_keyword: 0.7
+    weight_semantic: 0.3
+  conceptual:      # 概念型: "什么是RAG" → 语义优先
+    primary: semantic
+    secondary: [keyword]
+    weight_keyword: 0.2
+    weight_semantic: 0.8
+  comparative:     # 对比型: "A和B对比" → 多查询并行
+    primary: multi_query
+    secondary: [semantic, keyword]
+  procedural:      # 操作型: "如何部署" → 标题+步骤匹配
+    primary: keyword
+    secondary: [semantic]
+    weight_keyword: 0.5
+    weight_semantic: 0.5
+
+# --- Agentic RAG 参数 ---
+agentic:
+  max_retrieval_rounds: 3          # 最多补充检索3轮
+  early_stop_threshold: 0.8        # 充分性>0.8直接进入生成
+  low_confidence_threshold: 0.5    # 充分性<0.5触发补充检索
+  min_incremental_gain: 0.2        # 新增文档净增量<20%时提前终止
+  rewrite_strategies:              # 查询改写策略
+    - synonym_substitution          #   同义词替换
+    - hypernym_generalization       #   上位词泛化
+    - hyponym_specification         #   下位词特化
+    - follow_entity_hint            #   追踪文档中的引用线索
+
+# --- 多路召回 ---
+recall:
+  keyword_top_k: 50      # ES BM25 召回数
+  semantic_top_k: 100    # Qdrant 向量召回数
+  fusion_method: rrf     # RRF 融合
+  post_fusion_top: 50    # 融合后候选数
+
+# --- 重排序 ---
+rerank:
+  model: BAAI/bge-reranker-v2-m3
+  top_k: 10              # 最终返回数
+
+# --- 多级缓存 ---
+cache:
+  l1_exact:
+    enabled: true
+    ttl_seconds: 3600
+  l2_semantic:
+    enabled: true
+    ttl_seconds: 21600
+    similarity_threshold: 0.95
