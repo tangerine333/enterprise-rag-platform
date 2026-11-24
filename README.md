@@ -17,8 +17,8 @@
 | 文档解析 | MinerU / PyMuPDF / PaddleOCR / python-docx / python-pptx / openpyxl | 按版面复杂度与文件类型智能路由 |
 | 分块策略 | Small-to-Big | 子块 256 token 精确检索 / 父块 1024 token 回溯上下文 |
 | 表格索引 | 行级 + 表级双索引 | 行级定位 + LLM 语义摘要整体理解 |
-| 评估框架 | RAGAS | 6 维度自动评估 |
-| 在线监控 | Prometheus + Grafana | 点踩率 / 延迟 / 查询量看板 |
+| 评估框架 | RAGAS + 自建指标 | 6 维度 + 要点覆盖率 + 分类子集 + badcase 归因 |
+| 在线监控 | Prometheus + Grafana | 点踩率 / 延迟 / 查询量看板 + 阈值告警 |
 | 管理控制台 | Streamlit | 文档管理 / 检索测试 / 系统监控 |
 
 ## 快速开始
@@ -48,6 +48,8 @@ docker compose up -d --build
 
 ```bash
 pip install -r requirements.txt
+# 可选：安装重型解析器（MinerU 需先按 requirements-parse.txt 说明安装 CLI）
+pip install -r requirements-parse.txt
 cd deployments && docker compose up -d qdrant elasticsearch redis
 uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 streamlit run frontend/app.py
@@ -60,26 +62,27 @@ enterprise-rag-platform/
 ├── src/
 │   ├── api/                # FastAPI 路由
 │   │   ├── main.py         #   应用入口 + /metrics
-│   │   ├── documents.py    #   文档上传/解析/双路索引（增量去重+权限）
-│   │   ├── search.py       #   检索/问答/反馈回流
-│   │   └── system.py       #   健康检查/统计/链路追踪
+│   │   ├── documents.py    #   上传/更新/删除传播/双路索引（去重+补偿+权限）
+│   │   ├── search.py       #   检索/问答/反馈回流/缓存
+│   │   └── system.py       #   健康检查/统计/链路追踪/索引补偿重试
 │   ├── core/               # 配置 + SQLite元数据 + LLM工厂 + Prometheus指标
-│   ├── document_pipeline/  # 文档解析路由：PDF/Word/PPT/Excel/图片/Markdown
+│   ├── document_pipeline/  # 解析路由：MinerU/PyMuPDF/PaddleOCR/Office/Markdown
 │   ├── chunking/           # Small-to-Big 分块 + 表格行级/表级双索引
 │   └── retrieval/          # Agentic RAG 检索引擎（LangGraph 编排）
 │       ├── agentic.py      #   状态图：分类→召回→充分性判断→改写→冲突消解
 │       ├── intent.py       #   轻量意图分类器（规则兜底）
-│       ├── retrievers.py   #   Qdrant + Elasticsearch 双路召回
+│       ├── retrievers.py   #   Qdrant + Elasticsearch 双路召回/删除传播
 │       ├── fusion.py       #   RRF 融合 + 去重
 │       ├── reranker.py     #   BGE-Reranker 精排 + MMR
 │       ├── conflict.py     #   冲突检测 + 权威性加权
-│       └── cache.py        #   Redis 多级缓存
+│       └── cache.py        #   Redis 多级缓存（权限+版本隔离）
 ├── configs/                # YAML 策略配置 + Prompt 模板
-├── eval/                   # 600 条黄金测试集 + 评估 harness
+├── eval/                   # 600 条黄金集 + 指标/完整度/归因 harness
 ├── frontend/               # Streamlit 管理控制台
-├── deployments/            # Docker Compose + Prometheus + Grafana
-├── scripts/                # 批量导入 / 压测 / RAGAS demo
-└── requirements.txt
+├── deployments/            # Compose + Prometheus + Grafana + 告警规则
+├── scripts/                # 批量导入 / 压测 / 演示数据
+├── requirements.txt        # 运行时依赖
+└── requirements-parse.txt  # 可选重型解析依赖（MinerU/PaddleOCR）
 ```
 
 ## 核心架构
