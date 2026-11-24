@@ -133,6 +133,34 @@ class QdrantRetriever:
             pass  # Qdrant 不可用时跳过
         return point_ids
 
+    # ------------------------------------------------------------------
+    # 删除传播：按 doc_id 清除全部向量点（供文档删除/更新调用）
+    # ------------------------------------------------------------------
+    async def delete_by_doc(self, doc_id: int) -> None:
+        """删除某文档在 Qdrant 的全部向量点。
+
+        与检索路径不同，这里不吞异常：删除失败必须让调用方感知并写入补偿任务。
+        """
+        await asyncio.to_thread(self._delete_by_doc_sync, doc_id)
+
+    def _delete_by_doc_sync(self, doc_id: int) -> None:
+        from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+        try:
+            self.client.delete(
+                collection_name=self.settings.qdrant_collection,
+                points_selector=FilterSelector(
+                    filter=Filter(must=[
+                        FieldCondition(key="doc_id", match=MatchValue(value=doc_id))
+                    ])
+                ),
+                wait=True,
+            )
+        except Exception as exc:
+            # 集合尚不存在时视为已清理
+            if "not found" in str(exc).lower() or "doesn't exist" in str(exc).lower():
+                return
+            raise RuntimeError(f"Qdrant 删除失败 doc_id={doc_id}: {exc}") from exc
+
 
 class ESRetriever:
     """Elasticsearch BM25 关键词检索。"""
@@ -229,3 +257,26 @@ class ESRetriever:
             bulk(self.client, actions)
         except Exception:
             pass  # ES 不可用时跳过
+
+    # ------------------------------------------------------------------
+    # 删除传播：按 doc_id 清除全部文档（供文档删除/更新调用）
+    # ------------------------------------------------------------------
+    async def delete_by_doc(self, doc_id: int) -> None:
+        """删除某文档在 ES 的全部切片。
+
+        与检索路径不同，这里不吞异常：删除失败必须让调用方感知并写入补偿任务。
+        """
+        await asyncio.to_thread(self._delete_by_doc_sync, doc_id)
+
+    def _delete_by_doc_sync(self, doc_id: int) -> None:
+        try:
+            self.client.delete_by_query(
+                index=self.settings.es_index,
+                query={"term": {"doc_id": doc_id}},
+                refresh=True,
+            )
+        except Exception as exc:
+            # 索引尚不存在时视为已清理
+            if "not found" in str(exc).lower() or "index_not_found" in str(exc).lower():
+                return
+            raise RuntimeError(f"ES 删除失败 doc_id={doc_id}: {exc}") from exc

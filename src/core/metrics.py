@@ -4,7 +4,7 @@
 # ============================================================
 from __future__ import annotations
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 QUERY_TOTAL = Counter(
     "rag_query_total",
@@ -29,4 +29,9 @@ DOCUMENT_TOTAL = Counter(
     "rag_document_total",
     "文档上传总数",
     ["status"],  # completed | failed
+)
+
+INDEX_SYNC_PENDING = Gauge(
+    "rag_index_sync_pending",
+    "待补偿的索引同步任务数（Qdrant/ES 删除失败后落库）",
 )

@@ -26,6 +26,7 @@ class StatsResponse(BaseModel):
     total_queries: int = 0
     avg_confidence: float = 0.0
     dislike_rate: float = 0.0
+    pending_index_tasks: int = 0
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -54,7 +55,15 @@ async def stats():
         total_queries=total_queries,
         avg_confidence=round(avg_conf or 0.0, 4),
         dislike_rate=round(feedback["dislike_rate"], 4),
+        pending_index_tasks=store.count_pending_sync_tasks(),
     )
+
+
+@router.post("/reconcile")
+async def reconcile_index():
+    """重试文档删除后 Qdrant/ES 清理失败的补偿任务。"""
+    from src.api.documents import reconcile_index_sync
+    return await reconcile_index_sync()
 
 
 @router.get("/trace/{request_id}")

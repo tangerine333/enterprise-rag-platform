@@ -96,10 +96,24 @@ class MetadataStore:
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 );
 
+                -- 索引同步补偿任务：Qdrant/ES 删除失败时落库，恢复后重试
+                CREATE TABLE IF NOT EXISTS index_sync_tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    doc_id INTEGER NOT NULL,
+                    target TEXT NOT NULL,              -- qdrant | es
+                    op TEXT NOT NULL DEFAULT 'delete',
+                    status TEXT NOT NULL DEFAULT 'pending',  -- pending | done | failed
+                    retries INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(doc_id);
                 CREATE INDEX IF NOT EXISTS idx_chunks_parent ON chunks(parent_chunk_id);
                 CREATE INDEX IF NOT EXISTS idx_docs_status ON documents(parse_status);
                 CREATE INDEX IF NOT EXISTS idx_query_logs_req ON query_logs(request_id);
+                CREATE INDEX IF NOT EXISTS idx_sync_status ON index_sync_tasks(status);
             """)
             conn.commit()
             conn.close()
@@ -202,6 +216,73 @@ class MetadataStore:
             conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
             conn.commit()
             conn.close()
+
+    def delete_chunks_by_doc(self, doc_id: int):
+        """删除某文档的全部切片（更新时先清旧切片，再重建）。"""
+        with self._lock:
+            conn = self._get_conn()
+            conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
+            conn.commit()
+            conn.close()
+
+    # --- 索引同步补偿任务 ---
+    def add_sync_task(self, doc_id: int, target: str, op: str = "delete",
+                      error: str | None = None) -> int:
+        with self._lock:
+            conn = self._get_conn()
+            cursor = conn.execute(
+                "INSERT INTO index_sync_tasks (doc_id, target, op, last_error, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (doc_id, target, op, (error or "")[:1000], datetime.now().isoformat()),
+            )
+            conn.commit()
+            task_id = cursor.lastrowid
+            conn.close()
+        return task_id
+
+    def list_pending_sync_tasks(self, limit: int = 100) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM index_sync_tasks WHERE status = 'pending' ORDER BY id LIMIT ?",
+            (limit,),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def mark_sync_task_done(self, task_id: int):
+        with self._lock:
+            conn = self._get_conn()
+            conn.execute(
+                "UPDATE index_sync_tasks SET status = 'done', updated_at = ? WHERE id = ?",
+                (datetime.now().isoformat(), task_id),
+            )
+            conn.commit()
+            conn.close()
+
+    def mark_sync_task_failed(self, task_id: int, error: str, max_retries: int = 5):
+        """记录失败并递增重试次数；达到上限后转为 failed，等待人工介入。"""
+        with self._lock:
+            conn = self._get_conn()
+            row = conn.execute(
+                "SELECT retries FROM index_sync_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            retries = (row["retries"] if row else 0) + 1
+            status = "failed" if retries >= max_retries else "pending"
+            conn.execute(
+                "UPDATE index_sync_tasks SET retries = ?, status = ?, last_error = ?, updated_at = ? "
+                "WHERE id = ?",
+                (retries, status, (error or "")[:1000], datetime.now().isoformat(), task_id),
+            )
+            conn.commit()
+            conn.close()
+
+    def count_pending_sync_tasks(self) -> int:
+        conn = self._get_conn()
+        count = conn.execute(
+            "SELECT COUNT(*) FROM index_sync_tasks WHERE status = 'pending'"
+        ).fetchone()[0]
+        conn.close()
+        return count
 
     # --- 可信度权重（反馈回流） ---
     def apply_feedback(self, doc_id: int, feedback: str, step: float = 0.05):

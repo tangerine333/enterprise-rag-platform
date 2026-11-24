@@ -13,10 +13,10 @@ from pydantic import BaseModel
 
 from src.core.config import get_settings
 from src.core.database import compute_checksum, store
-from src.core.metrics import DOCUMENT_TOTAL
+from src.core.metrics import DOCUMENT_TOTAL, INDEX_SYNC_PENDING
 from src.document_pipeline import doc_parser
 from src.chunking import chunker
-from src.retrieval import es_retriever, qdrant_retriever
+from src.retrieval import es_retriever, qdrant_retriever, retrieval_cache
 
 router = APIRouter()
 
@@ -122,6 +122,8 @@ async def _process_document(doc_id: int, tmp_path: str, ext: str, permission_gro
         )
         store.update_document(doc_id, parse_status="completed", chunk_count=total_chunks)
         DOCUMENT_TOTAL.labels(status="completed").inc()
+        # 文档内容已变更：使旧检索/答案缓存整体失效
+        await retrieval_cache.bump_version()
     except Exception as e:
         store.update_document(doc_id, parse_status="failed", parse_error=str(e))
         DOCUMENT_TOTAL.labels(status="failed").inc()
@@ -244,6 +246,47 @@ async def get_document(doc_id: int):
 
 
 # ------------------------------------------------------------------
+# 索引清理：Qdrant/ES 删除失败 → 补偿任务
+# ------------------------------------------------------------------
+async def _cleanup_index(doc_id: int) -> list[str]:
+    """删除 Qdrant/ES 中的文档切片。失败的目标写入补偿任务并返回。"""
+    failed: list[str] = []
+    for target, retriever in (("qdrant", qdrant_retriever), ("es", es_retriever)):
+        try:
+            await retriever.delete_by_doc(doc_id)
+        except Exception as exc:
+            store.add_sync_task(doc_id, target, "delete", str(exc))
+            failed.append(target)
+    INDEX_SYNC_PENDING.set(store.count_pending_sync_tasks())
+    return failed
+
+
+async def reconcile_index_sync(limit: int = 100) -> dict:
+    """重试待补偿的索引同步任务（文档删除后 Qdrant/ES 清理失败）。"""
+    tasks = store.list_pending_sync_tasks(limit=limit)
+    done = failed = 0
+    errors: list[dict] = []
+    for task in tasks:
+        target = task["target"]
+        try:
+            if target == "qdrant":
+                await qdrant_retriever.delete_by_doc(task["doc_id"])
+            elif target == "es":
+                await es_retriever.delete_by_doc(task["doc_id"])
+            else:
+                raise RuntimeError(f"未知同步目标: {target}")
+            store.mark_sync_task_done(task["id"])
+            done += 1
+        except Exception as exc:
+            store.mark_sync_task_failed(task["id"], str(exc))
+            failed += 1
+            if len(errors) < 5:
+                errors.append({"task_id": task["id"], "target": target, "error": str(exc)})
+    INDEX_SYNC_PENDING.set(store.count_pending_sync_tasks())
+    return {"processed": len(tasks), "done": done, "failed": failed, "errors": errors}
+
+
+# ------------------------------------------------------------------
 # DELETE /{doc_id}
 # ------------------------------------------------------------------
 @router.delete("/{doc_id}")
@@ -251,8 +294,79 @@ async def delete_document(doc_id: int):
     doc = store.get_document(doc_id)
     if not doc:
         raise HTTPException(404, "文档不存在")
+    # 先删元数据（对外立即不可见），再传播到索引层；失败落补偿任务
     store.delete_document(doc_id)
-    return {"message": f"已删除: {doc['title']}", "doc_id": doc_id}
+    failed = await _cleanup_index(doc_id)
+    await retrieval_cache.bump_version()
+    return {
+        "message": f"已删除: {doc['title']}",
+        "doc_id": doc_id,
+        "index_cleanup": "completed" if not failed else "pending",
+        "pending_targets": failed,
+    }
+
+
+# ------------------------------------------------------------------
+# PUT /{doc_id} — 更新文档：清理旧索引 → 重新解析建索引
+# ------------------------------------------------------------------
+@router.put("/{doc_id}")
+async def replace_document(
+    doc_id: int,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    version: str = Form(""),
+    department: str = Form(""),
+    permission_groups: str = Form("*"),
+):
+    doc = store.get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, "文档不存在")
+
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
+    if ext not in ALLOWED_TYPES:
+        raise HTTPException(400, f"不支持的文件类型: .{ext}")
+
+    content = await file.read()
+    if len(content) > MAX_SIZE_MB * 1024 * 1024:
+        raise HTTPException(400, f"超过 {MAX_SIZE_MB}MB 限制")
+
+    checksum = compute_checksum(content)
+    if doc.get("checksum") == checksum:
+        return {"id": doc_id, "message": "内容未变化，跳过重建索引",
+                "parse_status": doc["parse_status"]}
+
+    # 旧索引清理失败则中止，避免新旧切片混杂、检索命中过期内容
+    failed = await _cleanup_index(doc_id)
+    if failed:
+        raise HTTPException(
+            503, f"旧索引清理未完成，请稍后重试或调用 /system/reconcile: {failed}"
+        )
+
+    store.delete_chunks_by_doc(doc_id)
+    await retrieval_cache.bump_version()
+
+    with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    store.update_document(
+        doc_id,
+        title=file.filename or doc["title"],
+        file_type=ext,
+        file_path=tmp_path,
+        file_size_bytes=len(content),
+        version=version or None,
+        department=department or None,
+        permission_groups=permission_groups or "*",
+        checksum=checksum,
+        parse_status="parsing",
+        parse_error=None,
+        chunk_count=0,
+    )
+    background_tasks.add_task(
+        _process_document, doc_id, tmp_path, ext, permission_groups or "*"
+    )
+    return {"id": doc_id, "message": "文档已更新，后台重建索引中", "parse_status": "parsing"}
 
 
 # ------------------------------------------------------------------
