@@ -10,7 +10,7 @@
 | Agent编排 | LangGraph | 有状态检索决策回路（意图分类→召回→充分性判断→改写循环） |
 | 向量数据库 | Qdrant | 单机高性能，gRPC 接口 |
 | 关键词检索引擎 | Elasticsearch | 工业级 BM25 全文检索 |
-| 缓存 | Redis | 多级缓存：精确匹配 / 语义相似 |
+| 缓存 | Redis | 多级缓存：精确匹配 / 归一化查询（权限组 + 索引版本隔离） |
 | Embedding | BGE-M3 (本地) | 1024维，同时输出稠密+稀疏向量 |
 | Reranker | BGE-Reranker-v2-m3 (本地) | Cross-Encoder 精排 + MMR 去重 |
 | LLM | OpenAI API (可替换) | 生成用大模型 + 意图分类用轻量模型（降本） |
@@ -140,15 +140,16 @@ flowchart TD
 
 三阶段：**LLM 冲突检测** → **信源权威性自动加权**（版本新旧 / 部门层级 / 更新时间 / 反馈可信度，真实计算而非 Prompt 空话）→ **多方呈现 + 推荐结论**。用户点踩/点赞经 `/feedback` 回流修正文档可信度权重，形成可迭代模型。
 
-### 5. 权限过滤 + 增量索引更新
+### 5. 权限过滤 + 增量索引与删除传播
 
-- **权限过滤**：文档标记 `permission_groups`，检索时按用户所属权限组过滤（Qdrant/ES 双重过滤）
-- **增量索引更新**：上传按 SHA-256 checksum 去重，重复文件跳过重建索引
+- **权限过滤**：文档标记 `permission_groups`，检索时按用户所属权限组过滤（Qdrant/ES 双重过滤）；缓存 key 同样包含权限组，避免跨权限命中
+- **增量索引更新**：上传按 SHA-256 checksum 去重；`PUT /documents/{id}` 先清理旧索引再重建，内容未变化时跳过
+- **删除传播**：删除文档时同步清理 Qdrant（按 `doc_id` 过滤删除）与 ES（`delete_by_query`）；失败写入 `index_sync_tasks` 补偿表，由 `POST /system/reconcile` 重试，`rag_index_sync_pending` 指标暴露积压
 
 ### 6. 离线评估 + 在线监控
 
 - **离线**：600 条分层测试集（Easy:Medium:Hard = 4:4:2），检索指标（Recall@K/MRR/冗余）+ RAGAS 6 维度（忠实度/相关性/上下文精度/召回/噪音敏感/正确性），支持基线 vs Agentic 对比
-- **在线**：Prometheus 采集点踩率/延迟/查询量，Grafana 看板实时展示
+- **在线**：Prometheus 采集点踩率/延迟/查询量，Grafana 看板实时展示，并配置点踩率、P95 延迟与补偿任务积压的阈值告警
 
 ## API 接口
 
@@ -156,11 +157,13 @@ flowchart TD
 |------|------|------|
 | POST | `/api/v1/documents/upload` | 上传文档（自动解析→双索引分块→Qdrant+ES） |
 | GET | `/api/v1/documents/` | 文档列表 |
-| DELETE | `/api/v1/documents/{id}` | 删除文档 |
+| DELETE | `/api/v1/documents/{id}` | 删除文档（同步清理 Qdrant/ES，失败补偿） |
+| PUT | `/api/v1/documents/{id}` | 更新文档（清理旧索引→重建） |
 | POST | `/api/v1/search/search` | 纯检索（含检索链路追踪） |
 | POST | `/api/v1/search/answer` | 检索 + LLM 生成（含引用溯源） |
 | POST | `/api/v1/search/feedback` | 用户反馈（回流修正可信度） |
-| GET | `/api/v1/system/stats` | 统计概览 |
+| GET | `/api/v1/system/stats` | 统计概览（含待补偿索引任务数） |
+| POST | `/api/v1/system/reconcile` | 重试索引删除补偿任务 |
 | GET | `/api/v1/system/trace/{request_id}` | 单次请求链路追踪 |
 | GET | `/metrics` | Prometheus 指标 |
 
