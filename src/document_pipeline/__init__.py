@@ -247,13 +247,47 @@ class DocumentParser:
             content = Path(path).read_text(encoding="utf-8")
         except Exception:
             content = f"(无法读取: {Path(path).name})"
+
+        tables = self._extract_markdown_tables(content)
         return ParsedDocument(
             title=Path(path).name, file_type=ext,
-            content_markdown=content, metadata={"format": "markdown"},
+            content_markdown=content, tables=tables,
+            metadata={"format": "markdown"},
         )
 
     async def _parse_text(self, path: str, ext: str) -> ParsedDocument:
         return await self._parse_markdown(path, ext)
+
+    @staticmethod
+    def _extract_markdown_tables(content: str) -> list[dict]:
+        """从 Markdown 文本提取 `| a | b |` 表格，转为结构化表格 dict。"""
+        tables = []
+        lines = content.split("\n")
+        i = 0
+        n = len(lines)
+        while i < n:
+            line = lines[i].strip()
+            if not line.startswith("|"):
+                i += 1
+                continue
+            # 收集连续的表格行
+            block = []
+            while i < n and lines[i].strip().startswith("|"):
+                block.append(lines[i].strip())
+                i += 1
+
+            rows = []
+            for bl in block:
+                cells = [c.strip() for c in bl.strip("|").split("|")]
+                # 跳过纯分隔符行
+                if all(set(c) <= {"-", ":", " "} for c in cells):
+                    continue
+                rows.append(cells)
+
+            if len(rows) >= 2:
+                tbl = DocumentParser._structure_table(rows, caption=f"Markdown Table {len(tables)+1}")
+                tables.append(tbl)
+        return tables
 
     # ------------------------------------------------------------------
     # 图片 — OCR + BLIP描述
