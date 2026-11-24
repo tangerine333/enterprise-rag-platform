@@ -14,7 +14,7 @@
 | Embedding | BGE-M3 (本地) | 1024维，同时输出稠密+稀疏向量 |
 | Reranker | BGE-Reranker-v2-m3 (本地) | Cross-Encoder 精排 + MMR 去重 |
 | LLM | OpenAI API (可替换) | 生成用大模型 + 意图分类用轻量模型（降本） |
-| 文档解析 | PyMuPDF / PaddleOCR / python-docx / python-pptx / openpyxl | 按文件类型智能路由 |
+| 文档解析 | MinerU / PyMuPDF / PaddleOCR / python-docx / python-pptx / openpyxl | 按版面复杂度与文件类型智能路由 |
 | 分块策略 | Small-to-Big | 子块 256 token 精确检索 / 父块 1024 token 回溯上下文 |
 | 表格索引 | 行级 + 表级双索引 | 行级定位 + LLM 语义摘要整体理解 |
 | 评估框架 | RAGAS | 6 维度自动评估 |
@@ -124,11 +124,14 @@ flowchart TD
 | 文件类型 | 解析器 | 说明 |
 |----------|--------|------|
 | PDF (文本) | PyMuPDF | 提取文本 + 表格 |
+| PDF (复杂版面) | MinerU | 多栏/公式/复杂表格；CLI 子进程调用，失败回退 PyMuPDF |
 | PDF (扫描件) | PaddleOCR | 中文 OCR（可选依赖） |
 | Word | python-docx | 保留标题层级 |
 | PPT | python-pptx | Slide 级解析 + 备注提取 |
 | Excel | openpyxl | 多 Sheet → Markdown 表格 |
 | Markdown | 原格式 + 表格提取 | 保留层级，提取 `|a|b|` 表格 |
+
+> 路由规则：按扩展名分发；PDF 先扫描页级文本密度与版面特征，扫描页走 OCR，多栏/多表/矢量密集页整篇交给 MinerU，其余走 PyMuPDF 快速通道。重型解析器未安装时自动降级，不影响主链路。
 
 ### 3. Small-to-Big 分块 + 表格双索引
 
@@ -138,7 +141,7 @@ flowchart TD
 
 ### 4. 多文档冲突消解 + 可信度建模
 
-三阶段：**LLM 冲突检测** → **信源权威性自动加权**（版本新旧 / 部门层级 / 更新时间 / 反馈可信度，真实计算而非 Prompt 空话）→ **多方呈现 + 推荐结论**。用户点踩/点赞经 `/feedback` 回流修正文档可信度权重，形成可迭代模型。
+三阶段：**LLM 冲突检测** → **信源权威性自动加权**（版本新旧 / 部门层级 / 更新时间 / 反馈可信度，真实计算而非 Prompt 空话）→ **多方呈现 + 推荐结论**。用户点踩/点赞经 `/feedback` 回流，按指数滑动平均（α=0.9）修正文档可信度权重并写入 `feedback_log` 审计，形成可迭代模型。
 
 ### 5. 权限过滤 + 增量索引与删除传播
 
@@ -190,7 +193,7 @@ pip install -r requirements-dev.txt
 python -m pytest tests/ -v
 ```
 
-33 个用例覆盖分块/融合/冲突/意图/数据库/API，全部可在无 Qdrant/ES/Redis/LLM 的环境下离线运行（外部依赖自动降级）。
+55 个用例覆盖解析路由/分块/融合/冲突/意图/缓存/删除传播/数据库/API，全部可在无 Qdrant/ES/Redis/LLM 的环境下离线运行（外部依赖自动降级，缺少可选依赖时个别用例自动跳过）。
 
 ## 认证与权限
 
