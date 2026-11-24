@@ -151,7 +151,7 @@ flowchart TD
 
 ### 6. 离线评估 + 在线监控
 
-- **离线**：600 条分层测试集（Easy:Medium:Hard = 4:4:2），检索指标（Recall@K/MRR/冗余）+ RAGAS 6 维度（忠实度/相关性/上下文精度/召回/噪音敏感/正确性），支持基线 vs Agentic 对比
+- **离线**：600 条分层测试集（Easy:Medium:Hard = 4:4:2；table / conflict / general 子集），检索指标（Recall@K/MRR/冗余）+ 答案完整度（要点覆盖率）+ RAGAS 6 维度（忠实度/相关性/上下文精度/召回/噪音敏感/正确性），支持基线 vs Agentic 对比与 badcase 归因（解析/召回/重排/生成）
 - **在线**：Prometheus 采集点踩率/延迟/查询量，Grafana 看板实时展示，并配置点踩率、P95 延迟与补偿任务积压的阈值告警
 
 ## API 接口
@@ -173,18 +173,23 @@ flowchart TD
 ## 评估
 
 ```bash
-# 生成/刷新 600 条黄金测试集
+# 生成/刷新 600 条黄金测试集（固定种子，可复现）
 python eval/generate_golden_set.py
 
-# 检索指标 + 基线 vs Agentic 对比（无需 LLM）
+# 检索指标 + 分类子集 + badcase 归因（无需 LLM）
 python eval/run_eval.py --mode retrieval
 
-# 追加 RAGAS 6 维度（需 OPENAI_API_KEY）
+# 小样本快速验证
+python eval/run_eval.py --mode retrieval --sample 50
+
+# 追加答案完整度（要点覆盖率）与 RAGAS 6 维度（需 OPENAI_API_KEY）
 python eval/run_eval.py --mode full
 
 # RAGAS 最小 demo
 python scripts/ragas_demo.py
 ```
+
+> 黄金集由 20 篇种子文档模板化生成（600 条，Easy/Medium/Hard=4:4:2，含 table/conflict/general 子集），用于流程验证与回归；接入真实知识库后可按同一 schema 替换为真实问题集。完整度口径为"要点覆盖率"（字符二元组匹配，非 LLM judge）；结果写入 `eval/results/{mode}_{timestamp}.json`。
 
 ## 测试
 
