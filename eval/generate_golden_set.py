@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from pathlib import Path
 
 # ------------------------------------------------------------
@@ -66,6 +67,8 @@ FACT_POOL = {
     "comparative": [
         ("产品X和产品Y在QPS上的区别", "产品X最大QPS为10000，产品Y为5000，X是Y的2倍", [1, 4]),
         ("旧版与新版退款政策的区别", "旧版退款时效7天，新版为15天，以新版为准", [10, 11]),
+        ("旧版与新版退款到账时间的区别", "旧版为7个工作日，新版为15个工作日，以新版为准", [10, 11]),
+        ("旧版与新版退款申请材料的区别", "旧版需纸质申请，新版支持线上提交并上传电子凭证", [10, 11]),
         ("一线城市与其他城市差旅报销标准的区别", "住宿上限一线城市500元/晚，其他城市350元/晚", [13]),
         ("机密级与绝密级信息的授权区别", "机密级需部门负责人审批，绝密级需信息安全委员会审批", [14]),
     ],
@@ -80,10 +83,27 @@ FACT_POOL = {
 }
 
 
+def _category(intent: str, answer: str, evidence: list[int]) -> str:
+    """评测子集标签：table（表格/数值）/ conflict（新旧版本冲突）/ general。"""
+    if 10 in evidence and 11 in evidence:
+        return "conflict"
+    if intent in ("factual", "comparative") and re.search(r"\d", answer):
+        return "table"
+    return "general"
+
+
+def _key_points(answer: str) -> list[str]:
+    """把标准答案拆成要点，用于完整度（要点覆盖率）口径。"""
+    parts = re.split(r"[，,；;。]", answer)
+    points = [p.strip() for p in parts if len(p.strip()) >= 2]
+    return points or [answer]
+
+
 def _generate() -> list[dict]:
     rng = random.Random(20240101)  # 固定种子，可复现
     items: list[dict] = []
     _id = 0
+    counters = {k: 0 for k in FACT_POOL}
 
     # 难度配额：easy 240 / medium 240 / hard 120
     plan = [("easy", 240), ("medium", 240), ("hard", 120)]
@@ -93,7 +113,9 @@ def _generate() -> list[dict]:
         for _ in range(quota):
             intent = intents[_id % len(intents)]
             pool = FACT_POOL[intent]
-            topic, answer, evidence = pool[_id % len(pool)]
+            # 按意图独立计数，保证每个主题都被均匀覆盖
+            topic, answer, evidence = pool[counters[intent] % len(pool)]
+            counters[intent] += 1
 
             if difficulty == "easy":
                 question = _question_by_intent(intent, topic)
@@ -108,13 +130,19 @@ def _generate() -> list[dict]:
                 ev = (evidence + [evidence[0] % 20 + 1])[:3] if _id % 2 == 0 else evidence[:2]
 
             ev = sorted(set(d for d in ev if 1 <= d <= 20))
+            # 冲突型问题必须保留双方证据，否则无法评测冲突检测
+            if 10 in evidence and 11 in evidence:
+                ev = sorted(set(ev) | {10, 11})
             items.append({
                 "id": f"{difficulty[:3]}-{_id:04d}",
                 "difficulty": difficulty,
                 "intent": intent,
+                "category": _category(intent, answer, ev),
                 "question": question,
                 "ground_truth": answer,
+                "key_points": _key_points(answer),
                 "evidence_doc_ids": ev,
+                "source": "synthetic_seed",
                 "note": "",
             })
             _id += 1
@@ -141,7 +169,9 @@ def main():
     # 校验配额
     from collections import Counter
     dist = Counter(i["difficulty"] for i in items)
+    cat = Counter(i["category"] for i in items)
     print(f"生成 {len(items)} 条，难度分布: {dict(dist)}")
+    print(f"类别分布: {dict(cat)}")
 
     out = Path(__file__).parent / "golden_set.jsonl"
     with open(out, "w", encoding="utf-8") as f:

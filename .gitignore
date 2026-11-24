@@ -38,6 +38,9 @@ data/
 # 评估候选集（生成物）
 eval/golden_set.candidates.jsonl
 
+# 评估运行结果（本地产物，按需归档）
+eval/results/
+
 # Logs
 logs/
 *.log
