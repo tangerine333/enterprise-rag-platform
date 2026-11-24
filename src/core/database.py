@@ -109,11 +109,23 @@ class MetadataStore:
                     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
                 );
 
+                -- 反馈审计：记录每次可信度权重修正（可追溯）
+                CREATE TABLE IF NOT EXISTS feedback_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    doc_id INTEGER NOT NULL,
+                    request_id TEXT,
+                    old_score REAL,
+                    new_score REAL,
+                    feedback TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(doc_id);
                 CREATE INDEX IF NOT EXISTS idx_chunks_parent ON chunks(parent_chunk_id);
                 CREATE INDEX IF NOT EXISTS idx_docs_status ON documents(parse_status);
                 CREATE INDEX IF NOT EXISTS idx_query_logs_req ON query_logs(request_id);
                 CREATE INDEX IF NOT EXISTS idx_sync_status ON index_sync_tasks(status);
+                CREATE INDEX IF NOT EXISTS idx_feedback_doc ON feedback_log(doc_id);
             """)
             conn.commit()
             conn.close()
@@ -285,17 +297,45 @@ class MetadataStore:
         return count
 
     # --- 可信度权重（反馈回流） ---
-    def apply_feedback(self, doc_id: int, feedback: str, step: float = 0.05):
-        """点赞升权 / 点踩降权，形成可迭代可信度模型。"""
-        delta = step if feedback == "positive" else -step
+    def apply_feedback(self, doc_id: int, feedback: str, request_id: str | None = None,
+                       alpha: float = 0.9) -> float | None:
+        """指数滑动平均修正可信度：new = α·old + (1-α)·target。
+
+        α 越大越平滑（单次反馈影响越小）；0.9 表示每次向目标移动 10%。
+        每次修正写入 feedback_log，便于审计与回溯。
+        """
+        target = 1.0 if feedback == "positive" else 0.0
         with self._lock:
             conn = self._get_conn()
+            row = conn.execute(
+                "SELECT authority_score FROM documents WHERE id = ?", (doc_id,)
+            ).fetchone()
+            if not row:
+                conn.close()
+                return None
+            old = float(row["authority_score"] if row["authority_score"] is not None else 0.5)
+            new = min(1.0, max(0.0, alpha * old + (1 - alpha) * target))
             conn.execute(
-                "UPDATE documents SET authority_score = MIN(1.0, MAX(0.0, authority_score + ?)), updated_at = ? WHERE id = ?",
-                (delta, datetime.now().isoformat(), doc_id),
+                "UPDATE documents SET authority_score = ?, updated_at = ? WHERE id = ?",
+                (new, datetime.now().isoformat(), doc_id),
+            )
+            conn.execute(
+                "INSERT INTO feedback_log (doc_id, request_id, old_score, new_score, feedback) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (doc_id, request_id, old, new, feedback),
             )
             conn.commit()
             conn.close()
+        return new
+
+    def feedback_history(self, doc_id: int, limit: int = 20) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM feedback_log WHERE doc_id = ? ORDER BY id DESC LIMIT ?",
+            (doc_id, limit),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
 
     def get_documents_meta(self, doc_ids: list[int]) -> dict[int, dict]:
         """批量取文档权威性元数据（检索后给冲突消解用）。"""

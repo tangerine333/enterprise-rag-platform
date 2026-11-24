@@ -36,6 +36,20 @@ def test_apply_feedback_clamped(test_store):
     assert test_store.get_document(doc_id)["authority_score"] <= 1.0
 
 
+def test_apply_feedback_uses_ema_and_logs(test_store):
+    doc_id = test_store.insert_document(title="d.md", file_type="md")
+
+    new_score = test_store.apply_feedback(doc_id, "positive", request_id="req_x")
+
+    # α=0.9：0.5 + 0.1*(1.0-0.5) = 0.55
+    assert abs(new_score - 0.55) < 1e-9
+    log = test_store.feedback_history(doc_id)
+    assert len(log) == 1
+    assert log[0]["request_id"] == "req_x"
+    assert abs(log[0]["old_score"] - 0.5) < 1e-9
+    assert abs(log[0]["new_score"] - 0.55) < 1e-9
+
+
 def test_get_documents_meta(test_store):
     id1 = test_store.insert_document(title="1.md", file_type="md", version="v1.0")
     id2 = test_store.insert_document(title="2.md", file_type="md", version="v2.0")

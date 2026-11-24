@@ -343,7 +343,7 @@ async def feedback(req: FeedbackRequest):
         try:
             doc_ids = json.loads(log["top_doc_ids"])
             for doc_id in doc_ids:
-                store.apply_feedback(int(doc_id), req.feedback)
+                store.apply_feedback(int(doc_id), req.feedback, request_id=req.request_id)
         except (ValueError, TypeError, json.JSONDecodeError):
             pass
 
