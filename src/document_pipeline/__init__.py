@@ -1,13 +1,21 @@
 # ============================================================
 # 文档解析流水线 — 实用工具，不为"自研"造轮子
-# PDF文本→PyMuPDF / 扫描件→PaddleOCR / Word→python-docx / PPT→python-pptx
-# 表格→语义增强摘要（LLM生成）
+# 路由：文本 PDF→PyMuPDF / 扫描页→PaddleOCR / 复杂版面→MinerU(CLI)
+#       Word→python-docx / PPT→python-pptx / Excel→openpyxl / Markdown
+# 表格→结构化 + Markdown（下游做行级/表级双索引）
 # ============================================================
 from __future__ import annotations
 
-import io
+import asyncio
+import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# MinerU 通过子进程调用，避免重型模型依赖污染主环境
+MINERU_CMD = os.getenv("MINERU_CMD", "mineru")
+MINERU_TIMEOUT = int(os.getenv("MINERU_TIMEOUT", "300"))
+MINERU_SCAN_PAGES = int(os.getenv("MINERU_SCAN_PAGES", "20"))
 
 
 @dataclass
@@ -56,13 +64,23 @@ class DocumentParser:
             doc = fitz.open(path)
             metadata = {"page_count": len(doc), "format": "pdf"}
 
+            # 复杂版面（多栏/多表/矢量绘制密集）优先走 MinerU；
+            # 未安装或失败时回退 PyMuPDF，保证主链路可用。
+            if self._pdf_needs_mineru(doc):
+                doc.close()
+                mineru_result = await self._parse_pdf_mineru(path, ext)
+                if mineru_result is not None:
+                    return mineru_result
+                errors.append("MinerU 不可用或解析失败，回退 PyMuPDF")
+                doc = fitz.open(path)
+
             for page_num, page in enumerate(doc, start=1):
                 text = page.get_text("text")
                 content_parts.append(text)
                 page_data = {"page_num": page_num, "text": text, "tables": [], "is_scanned": False}
 
-                # 扫描件检测：文本量极少 → PaddleOCR
-                if len(text.strip()) < 50:
+                # 页级路由：空白文本 → OCR；复杂页已在文档级交给 MinerU
+                if self.classify_pdf_page(page) == "scanned":
                     page_data["is_scanned"] = True
                     ocr_text = await self._ocr_page(page)
                     if ocr_text:
@@ -99,6 +117,109 @@ class DocumentParser:
             metadata=metadata,
             errors=errors,
         )
+
+    # ------------------------------------------------------------------
+    # PDF 页级/文档级路由
+    # ------------------------------------------------------------------
+    @staticmethod
+    def classify_pdf_page(page) -> str:
+        """页级路由：text（文本型）/ scanned（扫描页）/ complex（复杂版面）。
+
+        判定依据：文本密度、文本块左右分布（多栏）、表格数量、矢量绘制密度。
+        阈值偏保守——宁可走重型解析，也不要漏掉结构复杂页。
+        """
+        try:
+            text = page.get_text("text") or ""
+        except Exception:
+            text = ""
+        if len(text.strip()) < 50:
+            return "scanned"
+
+        try:
+            width = float(page.rect.width) or 1.0
+        except Exception:
+            width = 1.0
+
+        try:
+            blocks = page.get_text("blocks") or []
+        except Exception:
+            blocks = []
+        text_blocks = [b for b in blocks if len(b) >= 7 and b[6] == 0]
+        left = sum(1 for b in text_blocks if float(b[2]) <= width * 0.52)
+        right = sum(1 for b in text_blocks if float(b[0]) >= width * 0.48)
+        multi_column = left >= 2 and right >= 2
+
+        try:
+            finder = page.find_tables()
+            table_count = len(getattr(finder, "tables", finder) or [])
+        except Exception:
+            table_count = 0
+
+        try:
+            drawings = len(page.get_drawings() or [])
+        except Exception:
+            drawings = 0
+
+        if multi_column or table_count >= 2 or drawings > 200:
+            return "complex"
+        return "text"
+
+    @classmethod
+    def _pdf_needs_mineru(cls, doc) -> bool:
+        """扫描前若干页，任一页判定为复杂版面则整篇交给 MinerU。"""
+        for i, page in enumerate(doc):
+            if i >= MINERU_SCAN_PAGES:
+                break
+            if cls.classify_pdf_page(page) == "complex":
+                return True
+        return False
+
+    async def _parse_pdf_mineru(self, path: str, ext: str) -> ParsedDocument | None:
+        """调用 MinerU CLI 解析复杂版面 PDF。
+
+        通过子进程隔离重型依赖；未安装、超时、非零退出或无输出均返回 None，
+        由调用方回退 PyMuPDF。新版用 `mineru`，旧版可设 MINERU_CMD=magic-pdf。
+        """
+        cmd = os.getenv("MINERU_CMD", MINERU_CMD)
+        timeout = int(os.getenv("MINERU_TIMEOUT", str(MINERU_TIMEOUT)))
+
+        with tempfile.TemporaryDirectory(prefix="mineru_") as out_dir:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    cmd, "-p", path, "-o", out_dir,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except (OSError, NotImplementedError):
+                return None
+
+            try:
+                await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.communicate()
+                return None
+
+            if proc.returncode != 0:
+                return None
+
+            md_files = sorted(
+                Path(out_dir).rglob("*.md"),
+                key=lambda p: p.stat().st_size,
+                reverse=True,
+            )
+            if not md_files:
+                return None
+
+            content = md_files[0].read_text(encoding="utf-8")
+            return ParsedDocument(
+                title=Path(path).name,
+                file_type=ext,
+                content_markdown=content,
+                tables=self._extract_markdown_tables(content),
+                metadata={"format": "pdf", "parser": "mineru"},
+                errors=[],
+            )
 
     async def _ocr_page(self, page) -> str:
         """PaddleOCR 识别扫描页。"""

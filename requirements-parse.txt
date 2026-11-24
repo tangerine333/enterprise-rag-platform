@@ -1,0 +1,14 @@
+# ============================================================
+# 可选重型解析依赖 — 不进主环境，按需安装
+# 主链路未安装这些依赖时自动降级：PyMuPDF 直读 / 跳过 OCR / 回退解析
+# ============================================================
+
+# PaddleOCR：扫描页与独立图片的 OCR
+paddleocr==2.9.1
+paddlepaddle==3.0.0
+
+# MinerU：复杂版面 PDF（多栏/公式/复杂表格）解析
+# 推荐通过独立环境或容器安装 CLI，再由本项目子进程调用：
+#   新版：pip install "mineru[core]"      # 命令：mineru
+#   旧版：pip install magic-pdf            # 命令：magic-pdf（设置 MINERU_CMD=magic-pdf）
+# 安装后确认 `mineru -h` 可用；未安装时自动回退 PyMuPDF。
