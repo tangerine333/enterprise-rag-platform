@@ -2,26 +2,16 @@
 # 检索策略配置 — Agentic RAG 自适应检索
 # ============================================================
 
-# --- 意图 → 检索策略路由 (LLM驱动) ---
+# --- 意图 → 检索工具路由 (配置驱动，对应 retrieval/tools.py 的注册表) ---
 intent_routing:
   factual:         # 事实型: "合同金额多少" → 关键词优先
-    primary: keyword
-    secondary: [semantic]
-    weight_keyword: 0.7
-    weight_semantic: 0.3
+    tools: [keyword, semantic]
   conceptual:      # 概念型: "什么是RAG" → 语义优先
-    primary: semantic
-    secondary: [keyword]
-    weight_keyword: 0.2
-    weight_semantic: 0.8
+    tools: [semantic, keyword]
   comparative:     # 对比型: "A和B对比" → 多查询并行
-    primary: multi_query
-    secondary: [semantic, keyword]
-  procedural:      # 操作型: "如何部署" → 标题+步骤匹配
-    primary: keyword
-    secondary: [semantic]
-    weight_keyword: 0.5
-    weight_semantic: 0.5
+    tools: [multi_query]
+  procedural:      # 操作型: "如何部署" → 结构化过滤 + 语义补充
+    tools: [structured, semantic]
 
 # --- Agentic RAG 参数 ---
 agentic:
