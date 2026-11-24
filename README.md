@@ -1,6 +1,6 @@
 # Agentic RAG — 企业多源异构文档智能问答平台
 
-面向企业内部跨平台（Confluence/语雀/Google Docs）、多格式（PDF/Word/PPT/Excel/图片/Markdown）文档的统一知识问答系统。基于 **Agentic RAG** 范式，由 LLM 在检索阶段实时判断检索结果是否充分、动态调整检索策略，替代传统 RAG 的固定线性管道。
+面向企业内部跨平台（Confluence/语雀/共享盘）导出的多格式（PDF/Word/PPT/Excel/图片/Markdown）文档的统一知识问答系统。支持导出文档批量导入（`scripts/bulk_import.py`），不依赖平台私有 API。基于 **Agentic RAG** 范式，由 LLM 在检索阶段实时判断检索结果是否充分、动态调整检索策略，替代传统 RAG 的固定线性管道。
 
 ## 技术栈
 
@@ -19,7 +19,7 @@
 | 表格索引 | 行级 + 表级双索引 | 行级定位 + LLM 语义摘要整体理解 |
 | 评估框架 | RAGAS + 自建指标 | 6 维度 + 要点覆盖率 + 分类子集 + badcase 归因 |
 | 在线监控 | Prometheus + Grafana | 点踩率 / 延迟 / 查询量看板 + 阈值告警 |
-| 管理控制台 | Streamlit | 文档管理 / 检索测试 / 系统监控 |
+| 管理控制台 | Streamlit | 文档管理 / 检索测试 / 系统状态 |
 
 ## 快速开始
 
@@ -201,7 +201,7 @@ pip install -r requirements-dev.txt
 python -m pytest tests/ -v
 ```
 
-55 个用例覆盖解析路由/分块/融合/冲突/意图/缓存/删除传播/数据库/API，全部可在无 Qdrant/ES/Redis/LLM 的环境下离线运行（外部依赖自动降级，缺少可选依赖时个别用例自动跳过）。
+62 个用例覆盖解析路由/分块/融合/冲突/意图/缓存/删除传播/评测/数据库/API，全部可在无 Qdrant/ES/Redis/LLM 的环境下离线运行（外部依赖自动降级，缺少可选依赖时个别用例自动跳过）。
 
 ## 认证与权限
 

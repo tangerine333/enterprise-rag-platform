@@ -13,7 +13,7 @@
 - **评测闭环**：600 条分层黄金集（table/conflict/general 子集）、Recall@K/MRR/冗余、要点覆盖率、RAGAS 6 维、badcase 四段归因，结果落盘 `eval/results/`
 - **可观测性**：Prometheus 指标 + Grafana 看板 + 点踩率/P95/补偿积压阈值告警
 - **工程化**：权限组前置过滤、SHA-256 增量去重、删除/更新向 Qdrant/ES 传播、失败补偿任务与 reconcile 接口、Redis 多级缓存与 30s 熔断降级
-- **测试与 CI**：55 个离线用例 + GitHub Actions
+- **测试与 CI**：62 个离线用例 + GitHub Actions
 
 ### Fixed
 
