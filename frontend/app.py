@@ -261,13 +261,9 @@ LLM:       OpenAI API
 8. 生成答案 (LLM+引用标注)""")
 
     st.divider()
-    st.subheader("检索质量提升路径")
-    quality = [
-        ("初始版本(固定分块+单路向量)", "70%", ""),
-        ("+ Small-to-Big 分块", "78%", "+8%"),
-        ("+ ES 关键词混合检索", "85%", "+7%"),
-        ("+ BGE-Reranker 重排序", "90%", "+5%"),
-        ("+ Agentic RAG 自适应检索", "93.7%", "+3.7%"),
-    ]
-    for stage, recall, gain in quality:
-        st.markdown(f"**{stage}** → Recall@5: **{recall}** {gain}")
+    st.subheader("检索质量评估")
+    st.markdown("""
+- **离线评估**：600 条分层黄金测试集（Easy:Medium:Hard = 4:4:2）+ RAGAS 6 维度
+- **运行方式**：`python eval/run_eval.py --mode retrieval`（检索指标，无需 LLM）
+- **基线对比**：固定管道 vs Agentic 自适应，输出 Recall@5/10、MRR、检索冗余降幅
+""")
