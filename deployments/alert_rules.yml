@@ -1,0 +1,53 @@
+# ============================================================
+# Prometheus 告警规则 — RAG 服务在线质量与延迟
+# 点踩率突增 / 检索与问答延迟 / 索引补偿任务积压
+# ============================================================
+groups:
+  - name: rag-service
+    rules:
+      - alert: HighDislikeRate
+        expr: |
+          sum(rate(rag_feedback_total{feedback="negative"}[10m]))
+          /
+          clamp_min(sum(rate(rag_feedback_total[10m])), 0.001) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RAG 点踩率超过 20%"
+          description: "最近 10 分钟点踩率 {{ $value | humanizePercentage }}，请检查召回质量与近期文档变更。"
+
+      - alert: SearchLatencyP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(rag_query_latency_seconds_bucket{endpoint="search"}[5m])) by (le)
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "检索链路 P95 超过 1s"
+          description: "当前 P95 = {{ $value }}s，检查 Qdrant/ES 负载与 reranker 是否降级。"
+
+      - alert: AnswerLatencyP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(rag_query_latency_seconds_bucket{endpoint="answer"}[5m])) by (le)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "端到端问答 P95 超过 5s"
+          description: "当前 P95 = {{ $value }}s，检查 LLM 上游延迟与多轮改写轮次。"
+
+      - alert: IndexSyncBacklog
+        expr: rag_index_sync_pending > 10
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "索引补偿任务积压"
+          description: "待补偿的 Qdrant/ES 删除任务数 = {{ $value }}，可能存在已删除文档仍被召回。"
