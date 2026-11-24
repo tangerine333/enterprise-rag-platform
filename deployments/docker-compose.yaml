@@ -1,9 +1,7 @@
 # ============================================================
-# 基于Agentic RAG的多源异构文档智能问答平台
-# Docker Compose — 开发环境基础设施
+# Agentic RAG 企业多源异构文档智能问答平台
+# Docker Compose — 一键启动全套基础设施 + 应用 + 监控
 # ============================================================
-
-version: "3.8"
 
 services:
   # --- Qdrant (向量数据库) ---
@@ -15,8 +13,6 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
-    environment:
-      QDRANT__SERVICE__GRPC_PORT: 6334
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
       interval: 15s
@@ -36,12 +32,12 @@ services:
     volumes:
       - es_data:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q 'green\|yellow'"]
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q 'green\\|yellow'"]
       interval: 15s
       timeout: 10s
       retries: 10
 
-  # --- Redis (缓存 + 会话) ---
+  # --- Redis (缓存) ---
   redis:
     image: redis:7-alpine
     container_name: rag-redis
@@ -62,8 +58,12 @@ services:
       context: ..
       dockerfile: deployments/Dockerfile
     container_name: rag-api
+    env_file:
+      - ../.env
     depends_on:
       qdrant:
+        condition: service_healthy
+      elasticsearch:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -72,12 +72,15 @@ services:
       - ES_HOST=elasticsearch
       - ES_PORT=9200
       - REDIS_URL=redis://redis:6379/0
+      - EMBEDDING_DEVICE=cpu
+      - RERANKER_DEVICE=cpu
     ports:
       - "8000:8000"
     volumes:
       - ../src:/app/src
       - ../configs:/app/configs
-    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+      - ../data:/app/data
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 
   # --- Streamlit 管理控制台 ---
   streamlit:
@@ -93,8 +96,35 @@ services:
       - ../frontend:/app/frontend
       - ../src:/app/src
     environment:
-      - API_BASE_URL=http://api:8000
+      - API_BASE_URL=http://api:8000/api/v1
     command: streamlit run frontend/app.py --server.port 8501 --server.address 0.0.0.0
+
+  # --- Prometheus (监控采集) ---
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: rag-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command: --config.file=/etc/prometheus/prometheus.yml
+    depends_on:
+      - api
+
+  # --- Grafana (在线看板) ---
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: rag-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
 
 volumes:
   qdrant_data:
