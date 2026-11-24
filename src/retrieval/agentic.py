@@ -11,6 +11,7 @@
 # ============================================================
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 from typing import Any, TypedDict
@@ -329,13 +330,26 @@ class AgenticRAGEngine:
             "从检索结果中发现的线索（如'参见文档B'）追加检索",
         ]
         snippets = "\n".join(c.content[:150] for c in chunks[:5])
+
+        # 改写结果缓存：同一查询 + 轮次 + 已知上下文 → 复用，降低重复 LLM 调用
+        from src.retrieval import retrieval_cache
+        cache_key = f"{query}|r{round_num}|{hashlib.md5(snippets.encode('utf-8')).hexdigest()}"
+        cached = await retrieval_cache.get(cache_key, ["*"], namespace="rewrite")
+        if cached and cached.get("query"):
+            return cached["query"]
+
         prompt = self._load_prompt("query_rewrite.md", {
             "query": query, "snippets": snippets, "round_num": round_num,
             "strategy": strategies[min(round_num - 1, len(strategies) - 1)],
         })
         try:
             resp = await llm.ainvoke(prompt)
-            return (resp.content if hasattr(resp, "content") else str(resp)).strip()
+            rewritten = (resp.content if hasattr(resp, "content") else str(resp)).strip()
+            if rewritten:
+                await retrieval_cache.set(
+                    cache_key, {"query": rewritten}, ["*"], namespace="rewrite"
+                )
+            return rewritten
         except Exception:
             return query
 

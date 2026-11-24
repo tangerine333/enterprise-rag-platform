@@ -75,6 +75,25 @@ def test_metrics():
     assert b"rag_query_total" in r.content
 
 
+def test_answer_metrics_incremented():
+    """回归：/answer 曾把指标埋点写在 return 之后，导致永远不可达。"""
+    from prometheus_client import REGISTRY
+    labels = {"endpoint": "answer"}
+    before = REGISTRY.get_sample_value("rag_query_total", labels) or 0.0
+
+    r = client.post("/api/v1/search/answer", json={"query": "answer 指标埋点回归测试"})
+    assert r.status_code == 200
+
+    after = REGISTRY.get_sample_value("rag_query_total", labels) or 0.0
+    assert after == before + 1
+
+
+def test_stats_reports_pending_index_tasks():
+    r = client.get("/api/v1/system/stats")
+    assert r.status_code == 200
+    assert "pending_index_tasks" in r.json()
+
+
 def test_document_list():
     r = client.get("/api/v1/documents/")
     assert r.status_code == 200

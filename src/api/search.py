@@ -61,6 +61,7 @@ class SearchResponse(BaseModel):
     warning: str | None = None
     latency_ms: dict[str, float] = {}
     trace: list[dict] = []
+    cached: bool = False
 
 
 class AnswerRequest(BaseModel):
@@ -80,6 +81,7 @@ class AnswerResponse(BaseModel):
     conflicts: list[dict] = []
     conflict_resolution: str = ""
     latency_breakdown_ms: dict[str, float] = {}
+    cached: bool = False
 
 
 class FeedbackRequest(BaseModel):
@@ -98,7 +100,8 @@ async def search(req: SearchRequest, user_groups: list[str] = Depends(get_user_g
 
     if req.enable_cache:
         t_cache = time.perf_counter()
-        cached = await retrieval_cache.get(req.query)
+        cache_key = f"{req.top_k}|{req.query}"
+        cached = await retrieval_cache.get(cache_key, user_groups)
         latencies["cache_check_ms"] = (time.perf_counter() - t_cache) * 1000
         if cached:
             cached["request_id"] = request_id
@@ -161,7 +164,7 @@ async def search(req: SearchRequest, user_groups: list[str] = Depends(get_user_g
     )
 
     if req.enable_cache:
-        await retrieval_cache.set(req.query, resp.model_dump())
+        await retrieval_cache.set(f"{req.top_k}|{req.query}", resp.model_dump(), user_groups)
 
     QUERY_TOTAL.labels(endpoint="search").inc()
     QUERY_LATENCY.labels(endpoint="search").observe(time.perf_counter() - t_start)
@@ -192,6 +195,13 @@ async def answer(req: AnswerRequest, user_groups: list[str] = Depends(get_user_g
     t_start = time.perf_counter()
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     latencies = {}
+
+    cache_key = f"{req.top_k}|{req.query}"
+    cached = await retrieval_cache.get(cache_key, user_groups, namespace="answer")
+    if cached:
+        cached["request_id"] = request_id
+        cached["cached"] = True
+        return cached
 
     t_retrieve = time.perf_counter()
     result = await agentic_engine.retrieve(
@@ -227,7 +237,7 @@ async def answer(req: AnswerRequest, user_groups: list[str] = Depends(get_user_g
         latency_ms_json=json.dumps(latencies),
     )
 
-    return AnswerResponse(
+    resp = AnswerResponse(
         request_id=request_id,
         query=req.query,
         answer=answer_text,
@@ -240,22 +250,10 @@ async def answer(req: AnswerRequest, user_groups: list[str] = Depends(get_user_g
         conflict_resolution=conflict_resolution,
         latency_breakdown_ms=latencies,
     )
-
+    await retrieval_cache.set(cache_key, resp.model_dump(), user_groups, namespace="answer")
     QUERY_TOTAL.labels(endpoint="answer").inc()
     QUERY_LATENCY.labels(endpoint="answer").observe(time.perf_counter() - t_start)
-    return AnswerResponse(
-        request_id=request_id,
-        query=req.query,
-        answer=answer_text,
-        intent=result.intent,
-        confidence=round(result.confidence, 4),
-        retrieval_rounds=result.rounds_used,
-        citations=citations,
-        hallucination_rate=round(hall_rate, 4) if hall_rate is not None else None,
-        conflicts=conflicts,
-        conflict_resolution=conflict_resolution,
-        latency_breakdown_ms=latencies,
-    )
+    return resp
 
 
 async def _generate_answer(
