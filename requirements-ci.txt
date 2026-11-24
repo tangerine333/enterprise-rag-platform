@@ -1,0 +1,42 @@
+# ============================================================
+# CI 最小依赖 — 只安装测试所需，不装 torch / OCR / RAGAS 等重型可选依赖
+# 本地全量开发请用 requirements.txt；CI 用本文件保证 1 分钟内完成安装
+# ============================================================
+
+# --- Web Framework ---
+fastapi==0.136.0
+uvicorn[standard]==0.42.0
+python-multipart==0.0.19
+
+# --- LangChain / LangGraph ---
+langgraph==1.2.9
+langchain-core==1.4.9
+langchain-openai==1.3.5
+langchain-community==0.4.1
+
+# --- 检索与缓存客户端 ---
+qdrant-client==1.13.0
+elasticsearch==8.17.0
+redis==8.0.0
+
+# --- 文档解析（轻量部分，重型解析器不在测试路径） ---
+python-docx==1.2.0
+python-pptx==1.0.2
+openpyxl==3.1.5
+Pillow==11.1.0
+markdown-it-py==3.0.0
+
+# --- 可观测性 ---
+prometheus-client==0.25.0
+
+# --- 工具库 ---
+pydantic==2.12.5
+pydantic-settings==2.13.1
+pyyaml==6.0.3
+httpx==0.28.1
+jinja2==3.1.6
+numpy==2.4.6
+tenacity==9.0.0
+
+# --- 测试 ---
+pytest==9.0.3

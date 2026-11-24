@@ -33,6 +33,10 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+data/
+
+# 评估候选集（生成物）
+eval/golden_set.candidates.jsonl
 
 # Logs
 logs/
@@ -44,3 +48,8 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Personal / non-project files
+简历-*.md
+TASKS.md
+docs/技术九问.md
